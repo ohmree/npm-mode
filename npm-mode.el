@@ -1,10 +1,10 @@
-;;; npm-mode.el --- minor mode for working with npm projects
+;;; npm-mode.el --- Minor mode for working with npm projects
 
-;; Version: 0.6.0
-;; Author: Allen Gooch <allen.gooch@gmail.com>
-;; Url: https://github.com/mojochao/npm-mode
-;; Keywords: convenience, project, javascript, node, npm
-;; Package-Requires: ((emacs "24.1"))
+;; Version: 0.7.0
+;; Author: ohmree
+;; Url: https://github.com/ohmree/npm-mode
+;; Keywords: convenience, project, javascript, node, npm, yarn, pnpm
+;; Package-Requires: ((emacs "24.3"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -43,14 +43,23 @@
 
 ;;; Credit:
 
-;; This package began as a fork of the emacsnpm package, and its
-;; repository history has been preserved.  Many thanks to Alex
-;; for his contribution.
-;; https://github.com/AlexChesters/emacs-npm repo.
+;; This package is lightly modified from the original `npm-mode'
+;; by Allen Gooch, many thanks to him for creating the original
+;; package which lives at https://github.com/mojochao/npm-mode.
 
 ;;; Code:
 
 (require 'json)
+
+(defvar-local npm-mode-package-manager "npm"
+  "The package manager to use.")
+
+;; TODO: auto-detect the package manager to use from the filesystem and set `npm-mode-package-manager' accordingly.
+(defvar npm-mode--lock-file-names
+  '("npm" "package-lock.json"
+    "yarn" "yarn.lock"
+    "pnpm" "pnpm-lock.yaml")
+  "The name of npm, yarn or pnpm lockfiles.")
 
 (defvar npm-mode--project-file-name "package.json"
   "The name of npm project files.")
@@ -59,7 +68,7 @@
   "Name of npm mode modeline name.")
 
 (defun npm-mode--ensure-npm-module ()
-  "Asserts that you're currently inside an npm module"
+  "Asserts that you're currently inside a npm module."
   (npm-mode--project-file))
 
 (defun npm-mode--project-file ()
@@ -86,8 +95,8 @@ nil."
            (maphash (lambda (key value)
                       (setq commands
                             (append commands
-                                    (list (list key (format "%s %s" "npm" key))))
-                            ))
+                                    (list (list key (format "%s %s" npm-mode-package-manager key))))))
+
                     value)
            commands)
           (t value))))
@@ -98,66 +107,85 @@ nil."
 
 (defun npm-mode--get-project-dependencies ()
   "Get a list of project dependencies."
-  (npm-mode--get-project-property "dependencies"))
+  (append (npm-mode--get-project-property "dependencies")
+          (npm-mode--get-project-property "devDependencies")
+          (npm-mode--get-project-property "optionalDependencies")
+          (npm-mode--get-project-property "peerDependencies")))
 
 (defun npm-mode--exec-process (cmd &optional comint)
   "Execute a process running CMD."
   (let ((compilation-buffer-name-function
          (lambda (mode)
-           (format "*npm:%s - %s*"
-                   (npm-mode--get-project-property "name") cmd))))
+           (format "*%s:%s - %s*"
+                   npm-mode-package-manager
+                   (npm-mode--get-project-property "name")
+                   cmd))))
     (message (concat "Running " cmd))
     (compile cmd comint)))
 
+(defun npm-mode--exec-subcommand (subcommand &optional comint)
+  "Execute a package manager subcommand SUBCOMMAND."
+  (npm-mode--exec-process
+   (format "%s %s" npm-mode-package-manager subcommand)
+   comint))
+
 (defun npm-mode-npm-clean ()
-  "Run the 'npm list' command."
+  "Remove the `node_modules' directory."
   (interactive)
   (let ((dir (concat (file-name-directory (npm-mode--ensure-npm-module)) "node_modules")))
     (if (file-directory-p dir)
-      (when (yes-or-no-p (format "Are you sure you wish to delete %s" dir))
-        (npm-mode--exec-process (format "rm -rf %s" dir)))
+        (when (yes-or-no-p (format "Are you sure you wish to delete %s?" dir))
+          (npm-mode--exec-process (format "rm -rf %s" dir)))
       (message (format "%s has already been cleaned" dir)))))
 
 (defun npm-mode-npm-init ()
-  "Run the npm init command."
+  "Run the `npm init' command."
   (interactive)
-  (npm-mode--exec-process "npm init"))
+  (npm-mode--exec-subcommand "init"))
 
 (defun npm-mode-npm-install ()
-  "Run the 'npm install' command."
+  "Run the `npm install' command."
   (interactive)
-  (npm-mode--exec-process "npm install"))
+  (npm-mode--exec-subcommand "install"))
 
 (defun npm-mode-npm-install-save (dep)
-  "Run the 'npm install --save' command for DEP."
+  "Run the `npm install' command for DEP."
   (interactive "sEnter package name: ")
-  (npm-mode--exec-process (format "npm install %s --save" dep)))
+  (pcase npm-mode-package-manager
+    ("yarn" (npm-mode--exec-subcommand (format "add %s" dep)))
+    (_ (npm-mode--exec-subcommand (format "install %s" dep)))))
+
 
 (defun npm-mode-npm-install-save-dev (dep)
-  "Run the 'npm install --save-dev' command for DEP."
+  "Run the `npm install --save-dev' command for DEP."
   (interactive "sEnter package name: ")
-  (npm-mode--exec-process (format "npm install %s --save-dev" dep)))
+  (pcase npm-mode-package-manager
+    ("yarn" (npm-mode--exec-subcommand (format "add --dev %s" dep)))
+    (_ (npm-mode--exec-subcommand (format "install --save-dev %s" dep)))))
 
 (defun npm-mode-npm-uninstall ()
-  "Run the 'npm uninstall' command."
+  "Run the `npm uninstall' command."
   (interactive)
   (let ((dep (completing-read "Uninstall dependency: " (npm-mode--get-project-dependencies))))
-    (npm-mode--exec-process (format "npm uninstall %s" dep))))
+    (pcase npm-mode-package-manager
+      ("yarn" (npm-mode--exec-subcommand (format "remove %s" dep)))
+      (_ (npm-mode--exec-subcommand (format "uninstall %s" dep))))))
 
 (defun npm-mode-npm-list ()
-  "Run the 'npm list' command."
+  "Run the `npm list' command."
   (interactive)
-  (npm-mode--exec-process "npm list --depth=0"))
+  (npm-mode--exec-subcommand "list --depth=0"))
 
 (defun npm-run--read-command ()
+  "Prompt for a npm script from the current project."
   (completing-read "Run script: " (npm-mode--get-project-scripts)))
 
 (defun npm-mode-npm-run (script &optional comint)
-  "Run the 'npm run' command on a project script."
+  "Run the `npm run' command on a project script."
   (interactive
    (list (npm-run--read-command)
          (consp current-prefix-arg)))
-  (npm-mode--exec-process (format "npm run %s" script) comint))
+  (npm-mode--exec-subcommand (format "run %s" script) comint))
 
 (defun npm-mode-visit-project-file ()
   "Visit the project file."
@@ -165,11 +193,12 @@ nil."
   (find-file (npm-mode--project-file)))
 
 (defgroup npm-mode nil
-  "Customization group for npm-mode."
+  "Customization group for `npm-mode'."
   :group 'convenience)
 
 (defcustom npm-mode-command-prefix "C-c n"
-  "Prefix for npm-mode."
+  "Prefix for `npm-mode'."
+  :type 'key-sequence
   :group 'npm-mode)
 
 (defvar npm-mode-command-keymap
@@ -183,7 +212,7 @@ nil."
     (define-key map "r" 'npm-mode-npm-run)
     (define-key map "v" 'npm-mode-visit-project-file)
     map)
-  "Keymap for npm-mode commands.")
+  "Keymap for `npm-mode' commands.")
 
 (defvar npm-mode-keymap
   (let ((map (make-sparse-keymap)))
@@ -193,10 +222,10 @@ nil."
 
 ;;;###autoload
 (define-minor-mode npm-mode
-  "Minor mode for working with npm projects."
-  nil
-  npm-mode--modeline-name
-  npm-mode-keymap
+  "Minor mode for working with npm, yarn or pnpm projects."
+  :init-value nil
+  :lighter npm-mode--modeline-name
+  :keymap npm-mode-keymap
   :group 'npm-mode)
 
 ;;;###autoload
