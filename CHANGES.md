@@ -1,5 +1,9 @@
 # Changes
 
+## v0.7.1
+
+- Implement automatic lockfile-based package manager detection.
+
 ## v0.7.0
 
 - Implement initial support for the `yarn` and `pnpm` package managers (no auto-detection yet).
