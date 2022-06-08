@@ -1,10 +1,10 @@
 ;;; npm-mode.el --- Minor mode for working with npm projects
 
-;; Version: 0.7.0
+;; Version: 0.7.1
 ;; Author: ohmree
 ;; Url: https://github.com/ohmree/npm-mode
 ;; Keywords: convenience, project, javascript, node, npm, yarn, pnpm
-;; Package-Requires: ((emacs "24.3"))
+;; Package-Requires: ((emacs "25.1"))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -56,10 +56,10 @@
 
 ;; TODO: auto-detect the package manager to use from the filesystem and set `npm-mode-package-manager' accordingly.
 (defvar npm-mode--lock-file-names
-  '("npm" "package-lock.json"
-    "yarn" "yarn.lock"
-    "pnpm" "pnpm-lock.yaml")
-  "The name of npm, yarn or pnpm lockfiles.")
+  '(("npm" . "package-lock.json")
+    ("yarn" . "yarn.lock")
+    ("pnpm" . "pnpm-lock.yaml"))
+  "The names of npm, yarn or pnpm lockfiles.")
 
 (defvar npm-mode--project-file-name "package.json"
   "The name of npm project files.")
@@ -80,6 +80,18 @@ nil."
     (unless dir
       (error (concat "Error: cannot find " npm-mode--project-file-name)))
     (concat dir npm-mode--project-file-name)))
+
+(defun npm-mode--detect-project-package-manager ()
+  "Set `npm-mode-package-manager' based on the first lockfile found.
+The order is as follows: npm, yarn, pnpm."
+  (if-let
+      ((package-manager
+        (catch 'npm-mode--project-lockfile-found
+          (pcase-dolist (`(,package-manager . ,lock-file-name) npm-mode--lock-file-names)
+            (when (and lock-file-name (locate-dominating-file default-directory lock-file-name))
+              (throw 'npm-mode--project-lockfile-found package-manager))))))
+      (setq npm-mode-package-manager package-manager)
+    (error "Error: cannot find a npm, yarn or pnpm lockfile in project")))
 
 (defun npm-mode--get-project-property (prop)
   "Get the given PROP from the current project file."
@@ -132,6 +144,7 @@ nil."
 (defun npm-mode-npm-clean ()
   "Remove the `node_modules' directory."
   (interactive)
+  (npm-mode--detect-project-package-manager)
   (let ((dir (concat (file-name-directory (npm-mode--ensure-npm-module)) "node_modules")))
     (if (file-directory-p dir)
         (when (yes-or-no-p (format "Are you sure you wish to delete %s?" dir))
@@ -141,16 +154,19 @@ nil."
 (defun npm-mode-npm-init ()
   "Run the `npm init' command."
   (interactive)
+  (npm-mode--detect-project-package-manager)
   (npm-mode--exec-subcommand "init"))
 
 (defun npm-mode-npm-install ()
   "Run the `npm install' command."
   (interactive)
+  (npm-mode--detect-project-package-manager)
   (npm-mode--exec-subcommand "install"))
 
 (defun npm-mode-npm-install-save (dep)
   "Run the `npm install' command for DEP."
   (interactive "sEnter package name: ")
+  (npm-mode--detect-project-package-manager)
   (pcase npm-mode-package-manager
     ("yarn" (npm-mode--exec-subcommand (format "add %s" dep)))
     (_ (npm-mode--exec-subcommand (format "install %s" dep)))))
@@ -159,6 +175,7 @@ nil."
 (defun npm-mode-npm-install-save-dev (dep)
   "Run the `npm install --save-dev' command for DEP."
   (interactive "sEnter package name: ")
+  (npm-mode--detect-project-package-manager)
   (pcase npm-mode-package-manager
     ("yarn" (npm-mode--exec-subcommand (format "add --dev %s" dep)))
     (_ (npm-mode--exec-subcommand (format "install --save-dev %s" dep)))))
@@ -166,6 +183,7 @@ nil."
 (defun npm-mode-npm-uninstall ()
   "Run the `npm uninstall' command."
   (interactive)
+  (npm-mode--detect-project-package-manager)
   (let ((dep (completing-read "Uninstall dependency: " (npm-mode--get-project-dependencies))))
     (pcase npm-mode-package-manager
       ("yarn" (npm-mode--exec-subcommand (format "remove %s" dep)))
@@ -174,6 +192,7 @@ nil."
 (defun npm-mode-npm-list ()
   "Run the `npm list' command."
   (interactive)
+  (npm-mode--detect-project-package-manager)
   (npm-mode--exec-subcommand "list --depth=0"))
 
 (defun npm-run--read-command ()
@@ -181,7 +200,8 @@ nil."
   (completing-read "Run script: " (npm-mode--get-project-scripts)))
 
 (defun npm-mode-npm-run (script &optional comint)
-  "Run the `npm run' command on a project script."
+  "Run the `npm run' command on a project script SCRIPT."
+  (npm-mode--detect-project-package-manager)
   (interactive
    (list (npm-run--read-command)
          (consp current-prefix-arg)))
